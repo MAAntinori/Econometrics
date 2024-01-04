@@ -1,0 +1,1094 @@
+---
+title: "project_main"
+format: html
+editor: visual
+---
+
+```{r, eval = FALSE}
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(cowplot)
+library(ggthemes)
+library(ggfortify)
+library(tseries)
+library(forecast)
+library(rugarch)
+library(zoo)
+library(knitr)
+library(MTS)
+library(TSA)
+library(lmtest)
+
+set.seed(0)
+```
+
+```{r}
+uranium <- read_excel('uranium_prices.xls')
+```
+
+```{r}
+ggplot(uranium, aes(x = Date, y = Price)) +
+  geom_line() +
+  labs(x = "Date", y = "Price in USD") +
+  ggtitle("Uranium Price") +
+  theme_minimal()
+```
+
+## Base model (Prices 2010-2023)
+
+```{r}
+Xt <- uranium$Price[241:length(uranium$Price)] # prices from 2010
+
+price_plot <- ggplot(uranium, aes(x = Date, y = Price)) +
+  geom_line(data = subset(uranium, Date >= Date[241])) +
+  labs(x = "Date", y = "Price in USD") +
+  ggtitle("Uranium Price from 2010") +
+  theme_minimal()
+
+acf_plot <- ggAcf(Xt, lag.max=40) + 
+  labs(title="ACF for Uranium Price") + 
+  theme_minimal() 
+pacf_plot <- ggPacf(Xt, lag.max=40) + 
+  labs(title="PACF for Uranium Price") + 
+  theme_minimal() 
+
+plot_grid(price_plot, plot_grid(acf_plot, pacf_plot, ncol = 2), 
+          ncol = 1) +
+  theme_minimal()
+```
+
+```{r}
+# Test for stationarity 
+# H0 - Non stationary
+# H1 - Stationary 
+# alpha = 0.05
+
+# ADF Test 
+
+adf_test_Xt <- adf.test(Xt)
+adf_test_Xt
+```
+
+```{r}
+# Integration 
+Wt <- diff(Xt)
+
+# ADF test for Wt
+adf_Wt <- adf.test(Wt)
+adf_Wt
+```
+
+```{r}
+acf_plot_wt <- ggAcf(Wt, lag.max=40) + 
+  labs(title="ACF for Uranium Price (Diff)") + 
+  theme_minimal() 
+pacf_plot_wt <- ggPacf(Wt, lag.max=40) + 
+  labs(title="PACF for Uranium Price (Diff)") + 
+  theme_minimal() 
+plot_grid(acf_plot_wt, pacf_plot_wt)
+```
+
+```{r}
+# Xt- train(in sample), Xt - test (out-of-sample)
+train_size <- floor(0.8 * length(Xt))
+in_sample <- Xt[1:train_size]
+out_of_sample <- Xt[(train_size+1):length(Xt)]
+
+```
+
+```{r}
+#ARIMA(2, 1, 4)
+model_1 <- arima(in_sample, order = c(2, 1, 4))
+model_1
+```
+
+```{r}
+model_1_coef <- model_1$coef # parameter estimates
+model_1_se <- sqrt(diag(vcov(model_1))) # standard error
+model_1_stat <- model_1_coef/model_1_se # test statistics
+round(model_1_stat, 3)
+
+alpha <- 0.05
+zalpha <- qnorm(alpha/2, lower.tail=FALSE) #critical value
+round(zalpha,3)
+
+abs(model_1_stat) > zalpha 
+pval <- 2*pnorm(abs(model_1_stat),lower.tail=FALSE)
+round(pval,4)
+```
+
+```{r}
+res_model_1 <- residuals(model_1)
+res_plot_model_1 <- 
+  plot(res_model_1,
+  main = "ARIMA (2, 1, 4) Residuals plot", 
+  xlab = "Index", 
+  ylab = "Residuals")
+
+acf_res_model_1 <- ggAcf(res_model_1, lag.max=10) + 
+  labs(title="ACF Residuals of ARIMA (2, 1, 4) ") + 
+  theme_minimal() 
+
+acf_res_model_1
+
+acf_res_model_e2 <- ggAcf(res_model_1^2, lag.max=10) + 
+  labs(title="ACF Residuals^2 of ARIMA (2, 1, 4) ") + 
+  theme_minimal()
+
+acf_res_model_e2
+
+shapiro.test(res_model_1)
+Box.test(res_model_1, lag = 10, type = "Ljung-Box", fitdf = 6)
+Box.test(res_model_1^2, lag = 10, type = "Ljung-Box", fitdf = 6)
+```
+
+```{r}
+qqnorm(res_model_1, 
+       main = "QQ-plot Residuals for ARIMA (2, 1, 4)")
+qqline(res_model_1, col = 2) 
+
+hist(res_model_1, main = "Residuals ARIMA (2, 1, 4)", 
+     xlab = "Residuals",
+     ylab = "Count")
+
+
+```
+
+```{r}
+model_auto <- auto.arima(in_sample)
+model_auto
+```
+
+```{r}
+res_model_auto <- residuals(model_auto)
+res_plot_model_auto <- 
+  plot(res_model_auto,
+  main = "ARIMA (0, 1, 1) Residuals plot", 
+  xlab = "Index", 
+  ylab = "Residuals")
+
+acf_res_model_auto <- ggAcf(res_model_auto, lag.max=10) + 
+  labs(title="ACF Residuals of ARIMA (0, 1, 1) ") + 
+  theme_minimal() 
+
+acf_res_model_auto
+
+acf_res_model_auto_e2 <- ggAcf(res_model_auto^2, lag.max=10) + 
+  labs(title="ACF Residuals^2 of ARIMA (0, 1, 1) ") + 
+  theme_minimal()
+
+acf_res_model_auto_e2
+
+shapiro.test(res_model_auto)
+Box.test(res_model_auto, lag = 10, type = "Ljung-Box", fitdf = 1)
+Box.test(res_model_auto^2, lag = 10, type = "Ljung-Box", fitdf = 1)
+```
+
+```{r}
+qqnorm(res_model_auto, 
+       main = "QQ-plot Residuals for ARIMA (0, 1, 1)")
+qqline(res_model_auto, col = 2) 
+
+hist(res_model_auto, main = "Residuals ARIMA (0, 1, 1)", 
+     xlab = "Residuals",
+     ylab = "Count")
+```
+
+```{r}
+res2 <- res_model_1^2
+
+RES <- ts.intersect(res2,
+                    stats::lag(res2, -1),
+                    stats::lag(res2, -2)) 
+reg_a <- lm(RES[,1]~RES[,-1]) #auxiliary regression 
+reg_a_sum <- summary(reg_a)
+reg_a_sum
+```
+
+```{r}
+n    <- length(res2)
+R2   <- reg_a_sum$r.squared
+Qobs <- n*R2
+Qobs
+
+bptest(reg_a)
+```
+
+```{r}
+
+```
+
+## Base model (Prices 1990-2023)
+
+```{r}
+Xt_2 <- ts(uranium$Price)
+in_sample_2 <- Xt_2[1:383] # train_sample (-24 mese -> 2021 October)
+out_of_sample_2 <- Xt_2[384:407] # test_sample (last 24 -> 2021 Nov - 2023 - Nov)
+```
+
+```{r}
+price_plot_2 <- ggplot(uranium, aes(x = Date, y = Price)) +
+  geom_line(data = subset(uranium, Date <= Date[383])) +
+  labs(x = "Date", y = "Price in USD") +
+  ggtitle("Uranium Price ") +
+  theme_minimal()
+
+acf_plot_2 <- ggAcf(Xt_2, lag.max=20) + 
+  labs(title="ACF for Uranium Price") + 
+  theme_minimal() 
+pacf_plot_2 <- ggPacf(Xt_2, lag.max=20) + 
+  labs(title="PACF for Uranium Price") + 
+  theme_minimal() 
+
+plot_grid(price_plot_2, plot_grid(acf_plot_2, pacf_plot_2, ncol = 2), 
+          ncol = 1) +
+  theme_minimal()
+```
+
+```{r}
+adf.test(in_sample_2)
+```
+
+```{r}
+Wt_2 <- diff(in_sample_2)
+
+acf_plot_wt_2 <- ggAcf(Wt_2, lag.max=20) + 
+  labs(title="ACF for Uranium Price (Diff)") + 
+  theme_minimal() 
+pacf_plot_wt_2 <- ggPacf(Wt_2, lag.max=20) + 
+  labs(title="PACF for Uranium Price (Diff)") + 
+  theme_minimal() 
+plot_grid(acf_plot_wt_2, pacf_plot_wt_2)
+```
+
+```{r}
+model_2 <- arima(in_sample_2, order = c(11, 1, 2))
+model_2
+```
+
+```{r}
+model_2_coef <- model_2$coef # parameter estimates
+model_2_se <- sqrt(diag(vcov(model_2))) # standard error
+model_2_stat <- model_2_coef/model_2_se # test statistics
+round(model_2_stat, 3)
+
+alpha <- 0.05
+zalpha <- qnorm(alpha/2, lower.tail=FALSE) #critical value
+round(zalpha,3)
+
+abs(model_2_stat) > zalpha 
+pval <- 2*pnorm(abs(model_2_stat),lower.tail=FALSE)
+round(pval,4)
+```
+
+```{r}
+res_model_2 <- residuals(model_2)
+res_plot_model_2 <- 
+  plot(res_model_2,
+  main = "ARIMA (11, 1, 1) Residuals plot", 
+  xlab = "Index", 
+  ylab = "Residuals")
+
+acf_res_model_2 <- ggAcf(res_model_2, lag.max=20) + 
+  labs(title="ACF Residuals of ARIMA (11, 1, 2) ") + 
+  theme_minimal() 
+
+acf_res_model_2
+
+acf_res_model_2_e2 <- ggAcf(res_model_2^2, lag.max=20) + 
+  labs(title="ACF Residuals^2 of ARIMA (11, 1, 2) ") + 
+  theme_minimal()
+pacf_res_model_2_e2 <- ggPacf(res_model_2^2, lag.max=20) + 
+  labs(title="PACF Residuals^2 of ARIMA (11, 1, 2) ") + 
+  theme_minimal()
+
+acf_res_model_2_e2
+pacf_res_model_2_e2
+
+shapiro.test(res_model_2)
+Box.test(res_model_2, lag = 20, type = "Ljung-Box", fitdf = 13)
+Box.test(res_model_2^2, lag = 20, type = "Ljung-Box", fitdf = 13)
+```
+
+```{r}
+qqnorm(res_model_2, 
+       main = "QQ-plot Residuals for ARIMA (11, 1, 7)")
+qqline(res_model_2, col = 2) 
+
+hist(res_model_2, main = "Residuals ARIMA (11, 1, 7)", 
+     xlab = "Residuals",
+     ylab = "Count")
+```
+
+```{r}
+res2 <- res_model_2^2
+
+RES <- ts.intersect(res2,
+                    stats::lag(res2, -1),
+                    stats::lag(res2, -2),
+                    stats::lag(res2, -3),
+                    stats::lag(res2, -4),
+                    stats::lag(res2, -5),
+                    stats::lag(res2, -6),
+                    stats::lag(res2, -7),
+                    stats::lag(res2, -8)) 
+reg_a <- lm(RES[,1]~RES[,-1]) #auxiliary regression 
+reg_a_sum <- summary(reg_a)
+reg_a_sum
+```
+
+```{r}
+n    <- length(res2)
+R2   <- reg_a_sum$r.squared
+Qobs <- n*R2
+Qobs
+
+crit.value <- qchisq(0.05,df=8)
+Qobs>crit.value
+
+pchisq(Qobs,df=8,lower.tail=FALSE)
+
+bptest(reg_a)
+gqtest(reg_a)
+```
+
+```{r}
+
+```
+
+```{r}
+garch_spec <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(8, 2),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(11, 2)
+    )
+  )
+```
+
+```{r}
+garch_spec
+```
+
+```{r}
+arima_garch <-
+  ugarchfit(
+    spec = garch_spec,
+    data = in_sample_2,
+    solver = "hybrid"
+  )
+```
+
+```{r}
+arima_garch
+```
+
+```{r}
+arima_garch_preds <- 
+  ugarchforecast(
+    arima_garch, 
+    n.ahead = 24
+  )@forecast$seriesFor
+```
+
+```{r}
+# accuracy(ts(arima_garch_preds), out_of_sample_2)
+```
+
+```{r}
+#arima_garch_model <- 
+#  ugarchroll(
+#    spec = garch_model, 
+#    data = res(model_2), 
+#    n.ahead = 1, 
+#    refit.every = 1, 
+#    refit.window = "moving"
+#  )
+```
+
+```{r}
+garch_spec_2 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(1, 0),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(8, 2),
+      arfima = TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  )
+arima_garch_2 <-
+  ugarchfit(
+    spec = garch_spec_2,
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+arima_garch_preds_2 <- 
+  ugarchforecast(
+    arima_garch_2, 
+    n.ahead = 24
+  )@forecast$seriesFor
+
+accuracy(ts(fitted(arima_garch_2)), in_sample_2)
+accuracy(ts(arima_garch_preds_2), out_of_sample_2)
+```
+
+```{r}
+#ARIMA (4, 2) GARCH (4, 0) (RMSE 11.87, MPE - 23.27)
+#ARIMA (4, 2) GARCH (1, 0) (RMSE 11.83, MPE - 21.77)
+#ARIMA (8, 2) GARCH (1, 0) (RMSE 9.79, MPE - 20.73)
+#ARIMA (8, 2) GARCH (1, 6) (RMSE 10.22, MAPE - 19.94)
+arima_garch_2
+```
+
+```{r}
+df_fitted <- data.frame(
+  Date = uranium$Date[1:383],
+  Predictions = ts(fitted(arima_garch_2)),
+  Actual = in_sample_2
+)
+colnames(df_fitted)[2] <- "Predictions"
+
+ggplot(df_fitted, aes(x = Date)) +
+  geom_line(aes(y = Predictions, color = "Predictions"), linetype = "solid") +
+  geom_line(aes(y = Actual, color = "Actual"), linetype = "solid") +
+  scale_color_manual(values = c("Predictions" = "red", "Actual" = "blue")) +
+  labs(
+    x = "Date",
+    y = "Price",
+    title = "Predictions vs Actual Values"
+  ) +
+  labs(colour=NULL) +
+  theme_minimal()
+```
+
+## GridSearch ARIMA
+
+```{r}
+arima_p_range <- seq(1, 12)
+arima_d_range <- c(1)
+arima_q_range <- seq(1, 2)
+
+```
+
+```{r}
+# df for models results
+train_results_df <- data.frame(
+  Model = character(),
+  AIC = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# loop for gridsearch 
+
+for (p in arima_p_range) {
+  for (d in arima_d_range) {
+    for (q in arima_q_range) {
+      model <- stats::arima(in_sample_2,
+                    order = c(p, d, q))
+      
+        result_row <- data.frame(
+        Model = paste("ARIMA(", p, ",", d, ",", q, ")"),
+        AIC = AIC(model),
+        RMSE = accuracy(model)[1, 'RMSE']
+      )
+  
+      train_results_df <- rbind(train_results_df, result_row)
+    }
+  }
+}
+
+```
+
+```{r}
+train_results_df
+```
+
+```{r}
+# top 10 AIC
+top_10_models_aic <- train_results_df[order(train_results_df$AIC), ] %>%
+  head(10)
+
+# top 10 RMSE
+top_10_models_rmse <- train_results_df[order(train_results_df$RMSE), ] %>%
+  head(10)
+
+
+```
+
+```{r}
+# intersection models
+intersect(
+  top_10_models_aic$Model, 
+  top_10_models_rmse$Model
+)
+```
+
+## GridSearch ARIMA-GARCH
+
+```{r}
+arima_p <- seq(1, 12)
+arima_q <- c(1, 2)
+garch_p <- seq(1, 6)
+garch_d <- seq(0, 2)
+
+garch_train_results_df <- data.frame(
+  Model = character(),
+  AIC = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (p in arima_p) {
+  for (q in arima_q) {
+    for (gp in garch_p) {
+      for (gd in garch_d) {
+        garch_spec <- 
+            ugarchspec(
+                variance.model = list(
+                  model = "sGARCH", 
+                  garchOrder = c(gp, gd),
+                  variance.targeting = TRUE
+                  ), 
+                    mean.model = list(
+                      armaOrder = c(p, q),
+                      arfima =TRUE
+                    ),
+                    distribution.model = "norm",
+                    fixed.pars=list(arfima=0.999)
+                  )
+        
+        arima_garch <-ugarchfit(
+          spec = garch_spec,
+          data = in_sample_2,
+          solver = "hybrid",
+          fit.control = list(stationarity = 1)
+        )
+        
+      
+        result_row <- data.frame(
+        Model = paste("ARIMA(", p, ",", d, ",", q, ")", 
+                      "GARCH(", gp, ",", gd, ")"),
+        
+        AIC = infocriteria(arima_garch)[1],
+        RMSE = accuracy(c(ts(fitted(arima_garch))), in_sample_2)[1, 'RMSE']
+      )
+  
+      garch_train_results_df <- rbind(garch_train_results_df, result_row)
+      
+      }
+    }
+  }
+}
+```
+
+```{r}
+garch_train_results_df
+```
+
+```{r}
+# arima_garch top 10 AIC
+garch_top_10_models_aic <- 
+  garch_train_results_df[order(garch_train_results_df$AIC), ] %>%
+  head(10)
+
+# arima_garch top 10 RMSE
+garch_top_10_models_rmse <- 
+  garch_train_results_df[order(garch_train_results_df$RMSE), ] %>%
+  head(10)
+```
+
+```{r}
+# intersection models
+garch_top_10_models_aic
+```
+
+```{r}
+garch_top_10_models_rmse
+```
+
+```{r}
+# RMSE
+#ARIMA( 7 , 1 , 1 ) GARCH( 6 , 2 )
+#ARIMA( 8 , 1 , 1 ) GARCH( 6 , 1 )
+#ARIMA( 7 , 1 , 2 ) GARCH( 6 , 0 )
+#ARIMA( 9 , 1 , 2 ) GARCH( 4 , 0 )
+#ARIMA( 8 , 1 , 1 ) GARCH( 3 , 1 )
+
+# AIC
+#ARIMA( 3 , 1 , 2 ) GARCH( 3 , 0 )
+#ARIMA( 5 , 1 , 2 ) GARCH( 3 , 1 )
+#ARIMA( 8 , 1 , 2 ) GARCH( 4 , 2 )
+#ARIMA( 3 , 1 , 2 ) GARCH( 2 , 1 )
+#ARIMA( 6 , 1 , 2 ) GARCH( 4 , 0 )
+```
+
+## ARIMA(X) - GARCH(X)
+
+```{r}
+df_vars <- read_excel('df_vars.xlsx')
+```
+
+```{r}
+summary(lm(uranium ~ . - Date, data = df_vars))
+```
+
+```{r}
+IN_uranium <- ts(df_vars$uranium[1:249])
+IN_nuclear_eng_weight_us <- ts(df_vars$nuclear_eng_weight_us[1:249])
+IN_coal_eng_prod_us <- ts(df_vars$coal_eng_prod_us[1:249])
+IN_comm_ind <- ts(df_vars$comm_ind[1:249])
+IN_baltic_dry <- ts(df_vars$baltic_dry[1:249])
+IN_sp500 <- ts(df_vars$sp500[1:249])
+IN_cameco <- ts(df_vars$cameco[1:249])
+
+OUT_uranium <- ts(df_vars$uranium[250:273], start = 250)
+OUT_nuclear_eng_weight_us <- ts(df_vars$nuclear_eng_weight_us[250:273], start = 250)
+OUT_coal_eng_prod_us <- ts(df_vars$coal_eng_prod_us[250:273], start = 250)
+OUT_comm_ind <- ts(df_vars$comm_ind[250:273], start = 250)
+OUT_baltic_dry <- ts(df_vars$baltic_dry[250:273], start = 250)
+OUT_sp500 <- ts(df_vars$sp500[250:273], start = 250)
+OUT_cameco <- ts(df_vars$cameco[250:273], start = 250)
+
+```
+
+```{r}
+XReg <- cbind(IN_nuclear_eng_weight_us)
+newXReg <-cbind(OUT_nuclear_eng_weight_us)
+                
+```
+
+```{r}
+ba_X <- arimax(IN_uranium, order = c(1, 1, 1),
+               xreg = XReg)
+ba_X
+```
+
+```{r}
+
+Box.test(residuals(ba_X)^2, lag = 10, type = "Ljung-Box", fitdf = 4)
+ggAcf(residuals(ba_X)^2, lag.max=10) + 
+  labs(title="ACF Residuals^2 of ARIMA (2, 1, 0) ") + 
+  theme_minimal()
+```
+
+```{r}
+# best 
+gtXreg <-ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(3, 0),
+    variance.targeting = TRUE,
+    external.regressors = as.matrix(diff(ts(df_vars$comm_ind[1:250])))
+    ), 
+    mean.model = list(
+      armaOrder = c(1, 1),
+      include.mean = FALSE,
+      arfima =TRUE,
+      external.regressors = as.matrix(diff(ts(df_vars$nuclear_eng_weight_us[1:250])))
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = IN_uranium,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+```
+
+```{r}
+accuracy(
+  c(ugarchforecast(gtXreg, n.ahead = 23, 
+    external.forecasts = 
+      list(mregfor = as.matrix(diff(df_vars$nuclear_eng_weight_us[250:273])),
+           vregfor = as.matrix(diff(ts(df_vars$comm_ind[250:273])))
+           ))@forecast$seriesFor), 
+  c(df_vars$uranium[251:273])
+)
+  
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Cross Validation on out-of-sample
+
+### ARIMA
+
+```{r}
+#"ARIMA( 9 , 1 , 1 )"  
+#"ARIMA( 10 , 1 , 1 )"
+#"ARIMA( 7 , 1 , 2 )" 
+#"ARIMA( 8 , 1 , 2 )"  
+#"ARIMA( 10 , 1 , 2 )" 
+#"ARIMA( 11 , 1 , 2 )" 
+#"ARIMA( 12 , 1 , 2 )" 
+
+arima_1 <- arima(in_sample_2, order=c(9,1,1))
+arima_2 <- arima(in_sample_2, order=c(10,1,1))
+arima_3 <- arima(in_sample_2, order=c(7,1,2))
+arima_4 <- arima(in_sample_2, order=c(8,1,2))
+arima_5 <- arima(in_sample_2, order=c(10,1,2))
+arima_6 <- arima(in_sample_2, order=c(11,1,2))
+arima_7 <- arima(in_sample_2, order=c(12,1,2))
+
+```
+
+```{r}
+arima_models <- list(
+  arima_1, arima_2, arima_3, arima_4, 
+  arima_5, arima_6, arima_7
+)
+```
+
+```{r}
+arima_test_results <- data.frame(
+  Model = character(),
+  AIC = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in arima_models) {
+  arima_i <- i 
+  preds_i <- predict(arima_i, n.ahead = length(out_of_sample_2))$pred
+  
+  results_arima <- data.frame(
+    Model = paste(paste("ARIMA(", arima_i$arma[1], ",", 1, ",", arima_i$arma[2], ")")),
+    AIC = AIC(i),
+    RMSE = accuracy(preds_i, out_of_sample_2)[1, 'RMSE']
+  )
+  
+  arima_test_results <- rbind(arima_test_results, results_arima)
+}
+  
+```
+
+```{r}
+arima_test_results
+```
+
+```{r}
+# top-3 on test (RMSE)
+arima_top_3_models_test_rmse <- 
+  arima_test_results[order(arima_test_results$RMSE), ] %>%
+  head(3)
+arima_top_3_models_test_rmse
+```
+
+### ARIMA-GARCH
+
+```{r}
+# RMSE
+#ARIMA( 7 , 1 , 1 ) GARCH( 6 , 2 )
+#ARIMA( 8 , 1 , 1 ) GARCH( 6 , 1 )
+#ARIMA( 7 , 1 , 2 ) GARCH( 6 , 0 )
+#ARIMA( 9 , 1 , 2 ) GARCH( 4 , 0 )
+#ARIMA( 8 , 1 , 1 ) GARCH( 3 , 2 )
+
+# AIC
+#ARIMA( 3 , 1 , 2 ) GARCH( 3 , 0 )
+#ARIMA( 5 , 1 , 2 ) GARCH( 3 , 1 )
+#ARIMA( 8 , 1 , 2 ) GARCH( 4 , 2 )
+#ARIMA( 3 , 1 , 2 ) GARCH( 2 , 1 )
+#ARIMA( 6 , 1 , 2 ) GARCH( 4 , 0 )
+
+
+```
+
+```{r}
+#ARIMA( 7 , 1 , 1 ) GARCH( 6 , 2 )
+arima_garch_1 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(6, 2),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(7, 1),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 8 , 1 , 1 ) GARCH( 6 , 1 )
+arima_garch_2 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(6, 1),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(8, 1),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 7 , 1 , 2 ) GARCH( 6 , 0 )
+arima_garch_3 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(6, 0),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(7, 2),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 9 , 1 , 2 ) GARCH( 4 , 0 )
+arima_garch_4 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(4, 0),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(9, 2),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 8 , 1 , 1 ) GARCH( 3 , 2 )
+arima_garch_5 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(3, 2),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(8, 1),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 3 , 1 , 2 ) GARCH( 3 , 0 )
+arima_garch_6 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(3, 0),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(3, 2),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 5 , 1 , 2 ) GARCH( 3 , 1 )
+arima_garch_7 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(3, 1),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(5, 2),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 8 , 1 , 2 ) GARCH( 4 , 2 )
+arima_garch_8 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(4, 2),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(8, 2),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 3 , 1 , 2 ) GARCH( 2 , 1 )
+arima_garch_9 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(2, 1),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(3, 2),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+
+#ARIMA( 6 , 1 , 2 ) GARCH( 4 , 0 )
+arima_garch_10 <- 
+  ugarchspec(
+    variance.model = list(
+    model = "sGARCH", 
+    garchOrder = c(4, 0),
+    variance.targeting = TRUE
+    ), 
+    mean.model = list(
+      armaOrder = c(6, 2),
+      include.mean = FALSE,
+      arfima =TRUE
+    ),
+    distribution.model = "norm",
+    fixed.pars=list(arfima=0.999)
+  ) %>% 
+  ugarchfit(
+    data = in_sample_2,
+    solver = "hybrid",
+    fit.control = list(stationarity = 1)
+  )
+```
+
+```{r}
+garch_arima_list <-
+  list(
+    arima_garch_1, arima_garch_2, arima_garch_3, arima_garch_4,
+    arima_garch_5, arima_garch_6, arima_garch_7, arima_garch_8,
+    arima_garch_9, arima_garch_10
+  )
+```
+
+```{r}
+garch_test_results <- data.frame(
+  Model = character(),
+  AIC = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in garch_arima_list) {
+  garch_arima_i <- i 
+  garch_preds_i <- ugarchforecast(
+    garch_arima_i, n.ahead = length(out_of_sample_2)
+  )@forecast$seriesFor
+  
+  test_results_garch_arima <- data.frame(
+    Model = paste("ARIMA(", 
+                  garch_arima_i@model$modelinc[2],
+                  ",", 1, ",",
+                  garch_arima_i@model$modelinc[3], ")", 
+                  "GARCH(",
+                  garch_arima_i@model$modelinc[8], ",",
+                  garch_arima_i@model$modelinc[9], ")"),
+    AIC = infocriteria(garch_arima_i)[1],
+    RMSE = accuracy(c(garch_preds_i), out_of_sample_2)[1, 'RMSE']
+  )
+  
+  garch_test_results <- rbind(garch_test_results, test_results_garch_arima)
+}
+
+```
+
+```{r}
+garch_test_results
+```
+
+```{r}
+# top-3 on test (RMSE)
+garch_top_3_models_test_rmse <- 
+  garch_test_results[order(garch_test_results$RMSE), ] %>%
+  head(3)
+garch_top_3_models_test_rmse
+```
+
+```{r}
+#ARIMA( 5 , 1 , 2 ) GARCH( 3 , 1 ) = 13.5 
+#ARIMA( 11 , 1 , 2 ) = 16.5
+#ARIMA(X) (1, 1, 1) + nuclear_weight + GARCH(X) (3, 0) + commodity_index RMSE = 8.5
+```
